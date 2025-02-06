@@ -2,8 +2,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import json
-import time
+import re
 import os
 from dotenv import load_dotenv
 
@@ -20,19 +19,44 @@ EMAIL = os.environ.get("EMAIL")
 PASSWORD = os.environ.get("PASSWORD")
 
 
-def save_netscape_cookies(cookies, filename):
-    with open(filename, "w") as f:
-        for cookie in cookies:
-            domain = cookie["domain"].lstrip(".")
-            domain_flag = "TRUE" if cookie["domain"].startswith(".") else "FALSE"
-            path = cookie["path"]
-            secure = "TRUE" if cookie["secure"] else "FALSE"
-            expiry = str(int(cookie.get("expiry", 0)))
-            name = cookie["name"]
-            value = cookie["value"]
+def generate_netscape_cookies(cookies):
+    content = ""
+    for cookie in cookies:
+        domain = cookie["domain"].lstrip(".")
+        domain_flag = "TRUE" if cookie["domain"].startswith(".") else "FALSE"
+        path = cookie["path"]
+        secure = "TRUE" if cookie["secure"] else "FALSE"
+        expiry = str(int(cookie.get("expiry", 0)))
+        name = cookie["name"]
+        value = cookie["value"]
+        content += (
+            f"{domain}\t{domain_flag}\t{path}\t{secure}\t{expiry}\t{name}\t{value}\n"
+        )
+    return content
 
-            line = f"{domain}\t{domain_flag}\t{path}\t{secure}\t{expiry}\t{name}\t{value}\n"
-            f.write(line)
+
+def update_configmap(cookie_content):
+    config_path = "templates/ytdlp-cookies-config.yaml"
+
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"ConfigMap template not found at {config_path}")
+
+    indented_content = "\n".join(
+        [f"     {line}" if line.strip() else "" for line in cookie_content.split("\n")]
+    )
+
+    with open(config_path, "r+") as f:
+        content = f.read()
+
+        updated = re.sub(
+            r"(  cookies\.txt: \|)(\n(?:     .*?\n)*)?",
+            f"\\1\n{indented_content.rstrip()}\n",
+            content,
+            flags=re.MULTILINE,
+        )
+        f.seek(0)
+        f.write(updated)
+        f.truncate()
 
 
 def main():
@@ -68,12 +92,14 @@ def main():
 
         cookies = driver.get_cookies()
 
-        save_netscape_cookies(cookies, "youtube_cookies.txt")
-
-        print("Cookies saved successfully!")
+        content = generate_netscape_cookies(cookies)
+        try:
+            update_configmap(content)
+            print("Successfully updated ConfigMap")
+        except Exception as e:
+            print(f"ConfigMap update failed: {str(e)}")
 
     finally:
-        # Close browser quickly
         driver.quit()
 
 
